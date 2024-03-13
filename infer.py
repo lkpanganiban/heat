@@ -99,9 +99,17 @@ def corner_nms(preds, confs, image_size):
 
     return filtered_preds, new_confs
 
+def check_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    # elif torch.backends.mps.is_available():
+    #     return torch.device('mps')
+    else:
+        return torch.device('cpu')
 
 def main(dataset, ckpt_path, image_size, viz_base, save_base, infer_times):
-    ckpt = torch.load(ckpt_path)
+    device = check_device()
+    ckpt = torch.load(ckpt_path, map_location=device)
     print('Load from ckpts of epoch {}'.format(ckpt['epoch']))
     ckpt_args = ckpt['args']
     if dataset == 'outdoor':
@@ -122,18 +130,18 @@ def main(dataset, ckpt_path, image_size, viz_base, save_base, infer_times):
     strides = backbone.strides
     num_channels = backbone.num_channels
     backbone = nn.DataParallel(backbone)
-    backbone = backbone.cuda()
+    backbone = backbone.to(device)
     backbone.eval()
     corner_model = HeatCorner(input_dim=128, hidden_dim=256, num_feature_levels=4, backbone_strides=strides,
                               backbone_num_channels=num_channels)
     corner_model = nn.DataParallel(corner_model)
-    corner_model = corner_model.cuda()
+    corner_model = corner_model.to(device)
     corner_model.eval()
 
     edge_model = HeatEdge(input_dim=128, hidden_dim=256, num_feature_levels=4, backbone_strides=strides,
                           backbone_num_channels=num_channels)
     edge_model = nn.DataParallel(edge_model)
-    edge_model = edge_model.cuda()
+    edge_model = edge_model.to(device)
     edge_model.eval()
 
     backbone.load_state_dict(ckpt['backbone'])
@@ -163,7 +171,7 @@ def main(dataset, ckpt_path, image_size, viz_base, save_base, infer_times):
     pixels, pixel_features = get_pixel_features(image_size=image_size)
 
     for data_i, data in enumerate(test_dataloader):
-        image = data['img'].cuda()
+        image = data['img'].to(device)
         img_path = data['img_path'][0]
         annot_path = data['annot_path'][0]
         annot = np.load(annot_path, allow_pickle=True, encoding='latin1').tolist()
@@ -288,7 +296,6 @@ def get_results(image, annot, backbone, corner_model, edge_model, pixels, pixel_
     pred_corners, pred_confs = corner_nms(pred_corners, pred_confs, image_size=c_outputs.shape[1])
 
     pred_corners, pred_confs, edge_coords, edge_mask, edge_ids = get_infer_edge_pairs(pred_corners, pred_confs)
-
     corner_nums = torch.tensor([len(pred_corners)]).to(image.device)
     max_candidates = torch.stack([corner_nums.max() * args.corner_to_edge_multiplier] * len(corner_nums), dim=0)
 
